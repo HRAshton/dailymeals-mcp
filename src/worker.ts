@@ -18,6 +18,25 @@ const json = (value: unknown, status = 200) =>
     headers: { "content-type": "application/json" },
   });
 
+const corsHeaders = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
+  "access-control-allow-headers":
+    "Authorization, Content-Type, MCP-Protocol-Version, MCP-Session-Id, Last-Event-ID",
+  "access-control-expose-headers": "MCP-Protocol-Version, MCP-Session-Id",
+};
+
+function withCors(response: Response) {
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(corsHeaders))
+    headers.set(name, value);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 async function secureEquals(actual: string, expected: string) {
   const encoder = new TextEncoder();
   const [actualHash, expectedHash] = await Promise.all(
@@ -51,8 +70,10 @@ export default {
 
     if (url.pathname !== "/mcp")
       return new Response("Not Found", { status: 404 });
+    if (request.method === "OPTIONS")
+      return new Response(null, { status: 204, headers: corsHeaders });
     if (!(await isAuthorized(request, env.MCP_AUTH_TOKEN)))
-      return json({ error: "Unauthorized" }, 401);
+      return withCors(json({ error: "Unauthorized" }, 401));
 
     const adapter = new DailyMealsAdapter(
       env.DAILYMEALS_ORIGIN ?? "https://dailymeals.rs",
@@ -66,6 +87,6 @@ export default {
       sessionIdGenerator: undefined,
     });
     await server.connect(transport);
-    return transport.handleRequest(request);
+    return withCors(await transport.handleRequest(request));
   },
 } satisfies ExportedHandler<Env>;
