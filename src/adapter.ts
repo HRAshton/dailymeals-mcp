@@ -1,6 +1,15 @@
 import { DailyMealsError } from "./errors.js";
-import { parseDeliveries, parseOrderPage } from "./parser.js";
-import type { Delivery, OrderItem, ParsedOrderPage } from "./types.js";
+import {
+  parseDeliveries,
+  parseOrderConfirmation,
+  parseOrderPage,
+} from "./parser.js";
+import type {
+  Delivery,
+  HistoricalOrder,
+  OrderItem,
+  ParsedOrderPage,
+} from "./types.js";
 
 type RequestedItem = { dish_id: number; variant_id: number; quantity: number };
 export class DailyMealsAdapter {
@@ -62,6 +71,26 @@ export class DailyMealsAdapter {
     return parseOrderPage(
       await (await this.request(delivery.orderPath)).text(),
       deliveryId,
+    );
+  }
+
+  async listRecentOrders(limit: number): Promise<HistoricalOrder[]> {
+    const deliveries = (await this.listDeliveries())
+      .filter((delivery) => !delivery.editable)
+      .slice(0, limit);
+    return Promise.all(
+      deliveries.map(async (delivery) => {
+        const items = parseOrderConfirmation(
+          await (await this.request(delivery.orderPath)).text(),
+        );
+        return {
+          deliveryId: delivery.id,
+          date: delivery.date,
+          status: delivery.status,
+          items,
+          total: items.reduce((sum, item) => sum + item.lineTotal, 0),
+        };
+      }),
     );
   }
 

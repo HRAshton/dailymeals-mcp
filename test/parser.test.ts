@@ -4,7 +4,7 @@ import test from "node:test";
 import { DailyMealsAdapter } from "../src/adapter.js";
 import { DailyMealsError } from "../src/errors.js";
 import { IdempotencyCoordinator } from "../src/idempotency.js";
-import { parseOrderPage } from "../src/parser.js";
+import { parseOrderConfirmation, parseOrderPage } from "../src/parser.js";
 
 const fixture = await readFile(
   new URL("./fixtures/order-page.html", import.meta.url),
@@ -21,6 +21,16 @@ test("parses menu, revisions, current order, and preserved profile fields", () =
   );
   assert.equal(page.currentItems[0].lineTotal, 150);
   assert.equal(page.form.get("address")?.[0], "REDACTED");
+});
+test("parses completed orders without profile fields", () => {
+  const items = parseOrderConfirmation(`
+    <table><tr><th>Блюдо</th><th>Вариант</th><th>Количество</th><th>Стоимость</th></tr>
+    <tr><td>Soup</td><td>Large</td><td>2</td><td>300 RSD</td></tr>
+    <tr><td colspan="3">Total</td><td>300 RSD</td></tr></table>
+  `);
+  assert.deepEqual(items, [
+    { name: "Soup", variantName: "Large", quantity: 2, lineTotal: 300 },
+  ]);
 });
 test("draft replaces requested zero/old items, expands time slots, and recalculates from live price", () => {
   const adapter = new DailyMealsAdapter(

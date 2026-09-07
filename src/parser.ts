@@ -1,6 +1,11 @@
 import * as cheerio from "cheerio";
 import { DailyMealsError } from "./errors.js";
-import type { Delivery, Dish, ParsedOrderPage } from "./types.js";
+import type {
+  Delivery,
+  Dish,
+  HistoricalOrderItem,
+  ParsedOrderPage,
+} from "./types.js";
 
 const integer = (value: string | undefined, label: string) => {
   const number = Number(value);
@@ -178,4 +183,46 @@ export function parseOrderPage(
     total: currentItems.reduce((sum, item) => sum + item.lineTotal, 0),
     canOrder,
   };
+}
+
+export function parseOrderConfirmation(html: string): HistoricalOrderItem[] {
+  const $ = cheerio.load(html);
+  const table = $("table").filter((_, element) => {
+    const headers = $(element)
+      .find("th")
+      .map((_, header) => $(header).text().trim())
+      .get();
+    return headers.join("|") === "Блюдо|Вариант|Количество|Стоимость";
+  });
+  if (!table.length)
+    throw new DailyMealsError(
+      "MALFORMED_SITE_HTML",
+      "DailyMeals completed order was not found.",
+    );
+
+  const items = table
+    .find("tr")
+    .map((_, row) => {
+      const cells = $(row).find("td");
+      if (cells.length !== 4) return undefined;
+      const name = $(cells[0]).text().trim();
+      if (!name) return undefined;
+      const variantName = $(cells[1]).text().trim();
+      const quantity = integer($(cells[2]).text().trim(), "order quantity");
+      const lineTotal = price($(cells[3]).text().trim());
+      if (!Number.isFinite(lineTotal))
+        throw new DailyMealsError(
+          "MALFORMED_SITE_HTML",
+          "DailyMeals completed order data is incomplete.",
+        );
+      return { name, variantName, quantity, lineTotal };
+    })
+    .get()
+    .filter((item): item is HistoricalOrderItem => item !== undefined);
+  if (!items.length)
+    throw new DailyMealsError(
+      "MALFORMED_SITE_HTML",
+      "DailyMeals completed order contains no dishes.",
+    );
+  return items;
 }

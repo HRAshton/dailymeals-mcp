@@ -63,6 +63,27 @@ export function createMcpServer(
     },
   );
   server.registerTool(
+    "list_recent_orders",
+    {
+      description:
+        "Read the most recent completed DailyMeals orders and their dish totals.",
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        limit: z.number().int().min(1).max(20).default(10),
+      }),
+    },
+    async ({ limit }) => {
+      try {
+        return response({
+          ok: true,
+          orders: await adapter.listRecentOrders(limit),
+        });
+      } catch (error) {
+        return safeError(error);
+      }
+    },
+  );
+  server.registerTool(
     "get_delivery_menu",
     {
       description:

@@ -29,6 +29,19 @@ export type OrderItem = {
   unitPrice: number;
   lineTotal: number;
 };
+export type HistoricalOrderItem = {
+  name: string;
+  variantName: string;
+  quantity: number;
+  lineTotal: number;
+};
+export type HistoricalOrder = {
+  deliveryId: number;
+  date: string;
+  status: string;
+  items: HistoricalOrderItem[];
+  total: number;
+};
 
 export type ParsedOrderPage = {
   deliveryId: number;
