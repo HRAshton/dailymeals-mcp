@@ -1,11 +1,8 @@
-import crypto from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import express from "express";
 import { z } from "zod";
-import { cookieProvider, DailyMealsAdapter } from "./adapter.js";
+import type { DailyMealsAdapter } from "./adapter.js";
 import { DailyMealsError } from "./errors.js";
-import { idempotencyStore } from "./idempotency.js";
+import type { IdempotencyStore } from "./idempotency.js";
 
 const itemSchema = z.object({
   dish_id: z.number().int().positive(),
@@ -19,13 +16,6 @@ const orderSchema = z.object({
   delivery_time: z.string().min(1),
   comment: z.string().max(1000).optional(),
 });
-
-const adapter = new DailyMealsAdapter(
-  process.env.DAILYMEALS_ORIGIN ?? "https://dailymeals.rs",
-  cookieProvider(),
-);
-
-const store = idempotencyStore();
 
 function response(value: unknown) {
   return {
@@ -48,7 +38,10 @@ function safeError(error: unknown) {
   });
 }
 
-function createMcpServer() {
+export function createMcpServer(
+  adapter: DailyMealsAdapter,
+  store: IdempotencyStore,
+) {
   const server = new McpServer({ name: "dailymeals", version: "0.1.0" });
   server.registerTool(
     "list_deliveries",
@@ -198,41 +191,4 @@ function createMcpServer() {
     },
   );
   return server;
-}
-
-export function app() {
-  const application = express();
-  application.disable("x-powered-by");
-  application.use(express.json());
-  application.get("/healthz", (_req, res) =>
-    res
-      .status(
-        process.env.DAILYMEALS_COOKIE || process.env.DAILYMEALS_COOKIE_FILE
-          ? 200
-          : 503,
-      )
-      .json({
-        ok: Boolean(
-          process.env.DAILYMEALS_COOKIE || process.env.DAILYMEALS_COOKIE_FILE,
-        ),
-      }),
-  );
-  application.all("/mcp", async (req, res) => {
-    const expected = process.env.MCP_AUTH_TOKEN;
-    const supplied =
-      req.header("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
-    if (
-      !expected ||
-      supplied.length !== expected.length ||
-      !crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected))
-    )
-      return res.status(401).json({ error: "Unauthorized" });
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
-    });
-    res.on("close", () => transport.close().catch(() => undefined));
-    await createMcpServer().connect(transport);
-    await transport.handleRequest(req, res, req.body);
-  });
-  return application;
 }

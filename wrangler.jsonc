@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "dailymeals-mcp",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-09-07",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "IDEMPOTENCY",
+        "class_name": "IdempotencyCoordinator"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["IdempotencyCoordinator"]
+    }
+  ]
+}

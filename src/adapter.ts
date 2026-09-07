@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { DailyMealsError } from "./errors.js";
 import { parseDeliveries, parseOrderPage } from "./parser.js";
 import type { Delivery, OrderItem, ParsedOrderPage } from "./types.js";
@@ -157,12 +156,12 @@ export class DailyMealsAdapter {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
     });
-    const result = await response.json().catch(() => {
+    const result = (await response.json().catch(() => {
       throw new DailyMealsError(
         "DAILYMEALS_UPSTREAM_ERROR",
         "DailyMeals returned an invalid save response.",
       );
-    });
+    })) as { success?: unknown; message?: unknown };
 
     if (!result?.success)
       throw new DailyMealsError(
@@ -201,11 +200,4 @@ function normalizeTime(value: string, options: string[]) {
   }
 
   return selected;
-}
-
-export function cookieProvider() {
-  return async () =>
-    process.env.DAILYMEALS_COOKIE_FILE
-      ? (await readFile(process.env.DAILYMEALS_COOKIE_FILE, "utf8")).trim()
-      : (process.env.DAILYMEALS_COOKIE ?? "");
 }

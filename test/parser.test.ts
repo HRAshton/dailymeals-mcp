@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { DailyMealsAdapter } from "../src/adapter.js";
 import { DailyMealsError } from "../src/errors.js";
-import { MemoryStore } from "../src/idempotency.js";
+import { IdempotencyCoordinator } from "../src/idempotency.js";
 import { parseOrderPage } from "../src/parser.js";
 
 const fixture = await readFile(
@@ -111,15 +111,32 @@ test("rejects deliveries not owned by the authenticated account", async () => {
     globalThis.fetch = originalFetch;
   }
 });
-test("rejects duplicate idempotency keys", async () => {
-  const store = new MemoryStore();
-  await store.claim("unique-key");
-  await assert.rejects(
-    () => store.claim("unique-key"),
-    (error: unknown) =>
-      error instanceof DailyMealsError &&
-      error.code === "IDEMPOTENCY_KEY_REUSED",
+test("durably retains claimed idempotency keys", async () => {
+  const records = new Map<string, string>();
+  const storage = {
+    get: async (key: string) => records.get(key),
+    put: async (key: string, value: string) => records.set(key, value),
+    delete: async (key: string) => records.delete(key),
+  };
+  const coordinator = new IdempotencyCoordinator({
+    storage,
+  } as unknown as DurableObjectState);
+  const claim = () =>
+    coordinator.fetch(
+      new Request("https://idempotency/claim", { method: "POST" }),
+    );
+
+  assert.equal((await claim()).status, 204);
+  assert.equal((await claim()).status, 409);
+  assert.equal(
+    (
+      await coordinator.fetch(
+        new Request("https://idempotency/release", { method: "POST" }),
+      )
+    ).status,
+    204,
   );
+  assert.equal((await claim()).status, 204);
 });
 test("surfaces a DailyMeals save rejection without exposing a payload", async () => {
   const originalFetch = globalThis.fetch;
