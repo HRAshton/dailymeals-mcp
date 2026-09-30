@@ -20,6 +20,11 @@ const integer = (value: string | undefined, label: string) => {
 const price = (value: string) =>
   Number(value.replace(/[^0-9,.-]/g, "").replace(",", "."));
 
+const deliveryTimeSelector =
+  "[name='selected_delivery_time_array[]'], [name='selected_delivery_time_array']";
+
+const unique = (values: string[]) => [...new Set(values)];
+
 export function parseDeliveries(html: string): Delivery[] {
   const $ = cheerio.load(html);
   const seen = new Set<number>();
@@ -90,13 +95,17 @@ export function parseOrderPage(
       "INVALID_DELIVERY",
       "The returned order page belongs to another delivery.",
     );
-  const deliveryTimes = formElement
-    .find("input[name='selected_delivery_time_array[]']")
-    .map((_, e) => $(e).val()?.toString() ?? "")
-    .get()
-    .filter(Boolean);
-  const selectedDeliveryTimes =
-    form.get("selected_delivery_time_array[]") ?? [];
+  const deliveryTimes = unique(
+    $(deliveryTimeSelector)
+      .add(formElement.find(`${deliveryTimeSelector} option`))
+      .map((_, e) => $(e).val()?.toString() ?? "")
+      .get()
+      .filter((value) => value && value !== "on"),
+  );
+  const selectedDeliveryTimes = [
+    ...(form.get("selected_delivery_time_array[]") ?? []),
+    ...(form.get("selected_delivery_time_array") ?? []),
+  ];
   const dishes: Dish[] = [];
   $(".card").each((_, element) => {
     const card = $(element);
