@@ -52,6 +52,29 @@ test("draft replaces requested zero/old items, expands time slots, and recalcula
     false,
   );
 });
+test("draft accepts short comma-separated delivery slots", () => {
+  const adapter = new DailyMealsAdapter(
+    "https://example.test",
+    async () => "cookie",
+  );
+  const draft = adapter.prepare(
+    parseOrderPage(fixture, 714),
+    [{ dish_id: 9, variant_id: 0, quantity: 1 }],
+    "9-10,10-11",
+  );
+  assert.deepEqual(draft.selectedTimes, ["9:00-10:00", "10:00-11:00"]);
+});
+test("parses delivery time fields without bracket suffix", () => {
+  const page = parseOrderPage(
+    fixture.replaceAll(
+      "selected_delivery_time_array[]",
+      "selected_delivery_time_array",
+    ),
+    714,
+  );
+  assert.deepEqual(page.deliveryTimes, ["9:00-10:00", "10:00-11:00"]);
+  assert.deepEqual(page.selectedDeliveryTimes, ["9:00-10:00", "10:00-11:00"]);
+});
 test("rejects unavailable variants, quantities, and delivery times", () => {
   const adapter = new DailyMealsAdapter(
     "https://example.test",
