@@ -43,10 +43,13 @@ export type HistoricalOrder = {
   total: number;
 };
 
+export type DeliveryTimeOption = { value: string; label: string };
+
 export type ParsedOrderPage = {
   deliveryId: number;
   form: Map<string, string[]>;
   deliveryTimes: string[];
+  deliveryTimeOptions: DeliveryTimeOption[];
   selectedDeliveryTimes: string[];
   dishes: Dish[];
   currentItems: OrderItem[];

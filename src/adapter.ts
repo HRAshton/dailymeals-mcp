@@ -1,11 +1,12 @@
 import { DailyMealsError } from "./errors.js";
 import {
-  parseDeliveries,
+  parseDeliveriesPage,
   parseOrderConfirmation,
   parseOrderPage,
 } from "./parser.js";
 import type {
   Delivery,
+  DeliveryTimeOption,
   HistoricalOrder,
   OrderItem,
   ParsedOrderPage,
@@ -56,13 +57,27 @@ export class DailyMealsAdapter {
         "DAILYMEALS_UPSTREAM_ERROR",
         `DailyMeals returned HTTP ${response.status}.`,
       );
+
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    if (contentType.includes("text/html")) {
+      const html = await response.clone().text();
+      if (/<title[^>]*>\s*Требуется вход\s*<\/title>/i.test(html))
+        throw new DailyMealsError(
+          "DAILYMEALS_AUTH_FAILED",
+          "DailyMeals authentication failed.",
+        );
+    }
+
     return response;
   }
 
+  private async deliveriesPage(path = "/user-deliveries") {
+    const response = await this.request(path);
+    return parseDeliveriesPage(await response.text());
+  }
+
   async listDeliveries(): Promise<Delivery[]> {
-    return parseDeliveries(
-      await (await this.request("/user-deliveries")).text(),
-    );
+    return (await this.deliveriesPage()).deliveries;
   }
 
   async loadOrder(deliveryId: number): Promise<ParsedOrderPage> {
@@ -80,23 +95,52 @@ export class DailyMealsAdapter {
   }
 
   async listRecentOrders(limit: number): Promise<HistoricalOrder[]> {
-    const deliveries = (await this.listDeliveries())
-      .filter((delivery) => !delivery.editable)
-      .slice(0, limit);
-    return Promise.all(
-      deliveries.map(async (delivery) => {
+    const orders: HistoricalOrder[] = [];
+    const seenDeliveryIds = new Set<number>();
+    const candidatePages = new Map<number, string>();
+    const visitedPages = new Set<number>([1]);
+    let path = "/user-deliveries";
+
+    while (orders.length < limit) {
+      const page = await this.deliveriesPage(path);
+      for (const paginationPath of page.paginationPaths) {
+        const number = pageNumber(paginationPath);
+        if (number !== undefined && number > 1 && !visitedPages.has(number))
+          candidatePages.set(number, paginationPath);
+      }
+
+      for (const delivery of page.deliveries) {
+        if (orders.length >= limit) break;
+        if (
+          seenDeliveryIds.has(delivery.id) ||
+          delivery.status !== "Завершена" ||
+          !delivery.orderPath.includes("/user-order-confirmation")
+        )
+          continue;
+        seenDeliveryIds.add(delivery.id);
         const items = parseOrderConfirmation(
           await (await this.request(delivery.orderPath)).text(),
         );
-        return {
+        orders.push({
           deliveryId: delivery.id,
           date: delivery.date,
           status: delivery.status,
           items,
           total: items.reduce((sum, item) => sum + item.lineTotal, 0),
-        };
-      }),
-    );
+        });
+      }
+
+      if (orders.length >= limit) break;
+      const nextPage = [...candidatePages.keys()]
+        .filter((number) => !visitedPages.has(number))
+        .sort((a, b) => a - b)[0];
+      if (nextPage === undefined || visitedPages.size >= 100) break;
+      visitedPages.add(nextPage);
+      path = candidatePages.get(nextPage) as string;
+      candidatePages.delete(nextPage);
+    }
+
+    return orders;
   }
 
   prepare(
@@ -120,7 +164,7 @@ export class DailyMealsAdapter {
     const selectedTimes =
       deliveryTime === undefined
         ? page.selectedDeliveryTimes
-        : normalizeTime(deliveryTime, page.deliveryTimes);
+        : normalizeTime(deliveryTime, page.deliveryTimeOptions);
     fields.set("selected_delivery_time_array[]", selectedTimes);
 
     if (comment !== undefined) fields.set("comment", [comment]);
@@ -181,12 +225,11 @@ export class DailyMealsAdapter {
   }
 
   async submit(fields: Map<string, string[]>): Promise<unknown> {
-    const body = new URLSearchParams();
+    const body = new FormData();
     for (const [key, values] of fields)
       for (const value of values) body.append(key, value);
     const response = await this.request("/user-order-save", {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
     });
     const result = (await response.json().catch(() => {
@@ -211,7 +254,19 @@ export class DailyMealsAdapter {
   }
 }
 
-function normalizeTime(value: string, options: string[]) {
+function pageNumber(path: string) {
+  try {
+    const value = new URL(path, "https://dailymeals.invalid").searchParams.get(
+      "page",
+    );
+    if (!value || !/^\d+$/.test(value)) return undefined;
+    return Number(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeTime(value: string, options: DeliveryTimeOption[]) {
   const selected = value
     .split(",")
     .map((part) => part.trim())
@@ -245,7 +300,7 @@ function normalizeTime(value: string, options: string[]) {
   return expanded;
 }
 
-function requireSlot(value: string, options: string[]) {
+function requireSlot(value: string, options: DeliveryTimeOption[]) {
   const slot = normalizeSlot(value, options);
   if (!slot)
     throw new DailyMealsError(
@@ -255,20 +310,30 @@ function requireSlot(value: string, options: string[]) {
   return slot;
 }
 
-function normalizeSlot(value: string, options: string[]) {
-  if (options.includes(value)) return value;
+function normalizeSlot(value: string, options: DeliveryTimeOption[]) {
+  const exact = options.find(
+    (option) => option.value === value || option.label === value,
+  );
+  if (exact) return exact.value;
   const match = value.match(/^(\d{1,2})(?::00)?-(\d{1,2})(?::00)?$/);
   return match
     ? findMatchingSlot(Number(match[1]), Number(match[2]), options)
     : undefined;
 }
 
-function findMatchingSlot(start: number, end: number, options: string[]) {
+function findMatchingSlot(
+  start: number,
+  end: number,
+  options: DeliveryTimeOption[],
+) {
   const candidates = [
     `${start}:00-${end}:00`,
     `${String(start).padStart(2, "0")}:00-${String(end).padStart(2, "0")}:00`,
     `${start}-${end}`,
     `${String(start).padStart(2, "0")}-${String(end).padStart(2, "0")}`,
   ];
-  return candidates.find((candidate) => options.includes(candidate));
+  return options.find(
+    (option) =>
+      candidates.includes(option.value) || candidates.includes(option.label),
+  )?.value;
 }
