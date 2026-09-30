@@ -12,6 +12,11 @@ import type {
 } from "./types.js";
 
 type RequestedItem = { dish_id: number; variant_id: number; quantity: number };
+const deliveryTimeFieldNames = new Set([
+  "selected_delivery_time_array[]",
+  "selected_delivery_time_array",
+]);
+
 export class DailyMealsAdapter {
   constructor(
     private readonly origin: string,
@@ -108,8 +113,7 @@ export class DailyMealsAdapter {
     const fields = new Map(
       [...page.form].filter(
         ([name]) =>
-          !name.startsWith("dishes[") &&
-          name !== "selected_delivery_time_array[]",
+          !name.startsWith("dishes[") && !deliveryTimeFieldNames.has(name),
       ),
     );
 
@@ -208,25 +212,63 @@ export class DailyMealsAdapter {
 }
 
 function normalizeTime(value: string, options: string[]) {
-  if (options.includes(value)) return [value];
-  const match = value.match(/^(\d{1,2}):00-(\d{1,2}):00$/);
+  const selected = value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (selected.length > 1)
+    return selected.map((slot) => requireSlot(slot, options));
+
+  const normalizedValue = normalizeSlot(value.trim(), options);
+  if (normalizedValue) return [normalizedValue];
+
+  const match = value.trim().match(/^(\d{1,2})(?::00)?-(\d{1,2})(?::00)?$/);
 
   if (!match)
     throw new DailyMealsError(
       "INVALID_DELIVERY_TIME",
       "That delivery time is not available.",
     );
-  const selected: string[] = [];
+  const expanded: string[] = [];
 
   for (let hour = Number(match[1]); hour < Number(match[2]); hour++) {
-    const slot = `${hour}:00-${hour + 1}:00`;
-    if (!options.includes(slot))
+    const slot = findMatchingSlot(hour, hour + 1, options);
+    if (!slot)
       throw new DailyMealsError(
         "INVALID_DELIVERY_TIME",
         "That delivery time is not available.",
       );
-    selected.push(slot);
+    expanded.push(slot);
   }
 
-  return selected;
+  return expanded;
+}
+
+function requireSlot(value: string, options: string[]) {
+  const slot = normalizeSlot(value, options);
+  if (!slot)
+    throw new DailyMealsError(
+      "INVALID_DELIVERY_TIME",
+      "That delivery time is not available.",
+    );
+  return slot;
+}
+
+function normalizeSlot(value: string, options: string[]) {
+  if (options.includes(value)) return value;
+  const match = value.match(/^(\d{1,2})(?::00)?-(\d{1,2})(?::00)?$/);
+  return match
+    ? findMatchingSlot(Number(match[1]), Number(match[2]), options)
+    : undefined;
+}
+
+function findMatchingSlot(start: number, end: number, options: string[]) {
+  const candidates = [
+    `${start}:00-${end}:00`,
+    `${String(start).padStart(2, "0")}:00-${String(end).padStart(2, "0")}:00`,
+    `${start}-${end}`,
+    `${String(start).padStart(2, "0")}-${String(end).padStart(2, "0")}`,
+  ];
+  return candidates.find((candidate) => options.includes(candidate));
 }
